@@ -53,7 +53,7 @@ def wxLogDebug(msg,show):
         wx.LogMessage(msg)
 #
 def find_pcbnew_w():
-    windows = wx.GetTopLevelWindows()
+    windows = list(wx.GetTopLevelWindows())
     pcbneww = [w for w in windows if "pcbnew" in w.GetTitle().lower()]
     if len(pcbneww) != 1:
         return None
@@ -143,10 +143,10 @@ class Solder_Expander(pcbnew.ActionPlugin):
         #pcb = pcbnew.GetBoard()
         # net_name = "GND"
         #aParameters = SolderExpanderDlg(None)
-        # _pcbnew_frame = [x for x in wx.GetTopLevelWindows() if x.GetTitle().lower().startswith('pcbnew')][0]
+        # _pcbnew_frame = [x for x in list(wx.GetTopLevelWindows()) if x.GetTitle().lower().startswith('pcbnew')][0]
         global discretize
         
-        # _pcbnew_frame = [x for x in wx.GetTopLevelWindows() if x.GetName() == 'PcbFrame'][0]
+        # _pcbnew_frame = [x for x in list(wx.GetTopLevelWindows()) if x.GetName() == 'PcbFrame'][0]
         pcbnew_window = find_pcbnew_w()
         aParameters = SolderExpander_Dlg(pcbnew_window)
         aParameters.m_clearanceMM.SetValue("0.2")
