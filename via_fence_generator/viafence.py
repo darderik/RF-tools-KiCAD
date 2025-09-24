@@ -166,7 +166,9 @@ def clipPolygonWithPolygons(path, clipPathList):
 def unionPolygons(pathList):
     import pyclipper
     pc = pyclipper.Pyclipper()
-    for path in pathList: pc.AddPath(path, pyclipper.PT_SUBJECT, True)
+    for path in pathList:
+        if len(path) >= 3:
+            pc.AddPath(path, pyclipper.PT_SUBJECT, True)
     return pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO)
 
 def isPointInPolygon(point, path):
