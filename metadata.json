@@ -1,0 +1,38 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "RF-Tools",
+    "description": "A suite of kicad pcbnew RF Tools",
+    "description_full": "Rounder tools, Tapers for pads and tracks, Solder Mask Expander, Track Length, Via Fence Generator, Trace Clearance Generator",
+    "identifier": "com.github.easyw.kicad-rf-tools",
+    "type": "plugin",
+    "author": {
+        "name": "easyw",
+        "contact": {
+            "email": "easyw@katamail.com"
+        }
+    },
+    "license": "GPL-2.0",
+    "resources": {
+        "Github": "https://github.com/easyw/RF-tools-KiCAD",
+        "Readme": "https://github.com/easyw/RF-tools-KiCAD/blob/master/README.md"
+    },
+    "tags": [
+        "rf",
+        "pcbnew",
+        "fencing",
+        "expander"
+    ],
+    "versions": [
+        {
+            "version": "1.3.2",
+            "status": "stable",
+            "kicad_version": "8.0",
+            "download_url": "https://github.com/easyw/RF-tools-KiCAD/releases/download/v1.3.2/RF-tools-KiCAD-v1.3.2_pcm.zip",
+            "platforms": [
+                "linux",
+                "macos",
+                "windows"
+            ]
+        }
+    ]
+}
