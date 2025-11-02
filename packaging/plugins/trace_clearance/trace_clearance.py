@@ -78,10 +78,10 @@ class TraceClearance(pcbnew.ActionPlugin):
     def Run(self):
         """
         """
-        _pcbnew_frame = [x for x in wx.GetTopLevelWindows() if x.GetName() == 'PcbFrame'][0]
+        _pcbnew_frame = [x for x in list(wx.GetTopLevelWindows()) if x.GetName() == 'PcbFrame'][0]
         # _pcbnew_frame = [
         #     x
-        #     for x in wx.GetTopLevelWindows()
+        #     for x in list(wx.GetTopLevelWindows())
         #     if x.GetTitle().lower().startswith("pcbnew")
         # ][0]
         wx_params = TraceClearance_Dlg(_pcbnew_frame)
