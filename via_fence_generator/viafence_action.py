@@ -33,6 +33,23 @@ def getTrackAngleRadians(track):
 def distance (p1,p2):
     return math.hypot(p1.y-p2.y,p1.x-p2.x)
 
+# De-duplicate a list of [x, y] points using a distance tolerance (internal units)
+# Keeps the first point encountered and removes subsequent points closer than tol
+# This is used to avoid overlapping vias when multiple fence parts touch at endpoints
+# and should run regardless of DRC-collision removal setting.
+def dedupe_points(points, tol):
+    unique = []
+    for v in points:
+        vx, vy = int(v[0]), int(v[1])
+        keep = True
+        for u in unique:
+            if distance(pcbnew.wxPoint(vx, vy), pcbnew.wxPoint(int(u[0]), int(u[1]))) <= tol:
+                keep = False
+                break
+        if keep:
+            unique.append(v)
+    return unique
+
 class ViaFenceAction(pcbnew.ActionPlugin):
     # ActionPlugin descriptive information
     def defaults(self):
@@ -478,6 +495,8 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                 #    pcb_group.SetName(VIA_GROUP_NAME)
                 #    self.boardObj.Add(pcb_group)
                         
+                # Accumulate vias generated from arcs to de-duplicate later with line vias
+                viaPointsArcsAll = []
                 
                 # Do we want to include net tracks?
                 if (self.isNetFilterChecked):
@@ -568,19 +587,15 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                                     for i,p in enumerate(pts[:-1])]
                     # Generate via fence
                     try:
-                        viaPointsArcs = []
                         if len (arcObjects) > 0:
                             viaPointsArcs = generateViaFence(self.pathListArcs, self.viaOffset, self.viaPitch)
-                            viaObjListArcs = self.createVias(viaPointsArcs, self.viaDrill, self.viaSize, self.viaNetId)
-                            for v in viaObjListArcs:
-                                pcb_group.AddItem(v)
-                                
+                            # Defer creation; accumulate for global de-duplication
+                            viaPointsArcsAll.extend(viaPointsArcs)
                     except Exception as exc:
                         wx.LogMessage('exception on via fence generation: %s' % str(exc))
                         import traceback
                         wx.LogMessage(traceback.format_exc())
-                        viaPoints = []
-                        #wx.LogMessage('pL: %s' % str(self.pathListArcs))
+                        #viaPointsArcs = []
                 #wx.LogMessage('pts: %s' % str(pts))
                 
                 # Generate a path list from the pcbnew.BOARD_ITEM objects
@@ -590,12 +605,9 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                 #wx.LogMessage('pL: %s' % str(self.pathList))
                                     
                 
-                # Generate via fence
+                # Generate via fence (lines)
                 try:
-                    viaPointsArcs = []
                     viaPoints = generateViaFence(self.pathList, self.viaOffset, self.viaPitch)
-                    #if len (arcObjects) > 0:
-                    #    viaPointsArcs = generateViaFence(self.pathListArcs, self.viaOffset, self.viaPitch)
                 except Exception as exc:
                     wx.LogMessage('exception on via fence generation: %s' % str(exc))
                     import traceback
@@ -603,59 +615,38 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                     viaPoints = []
         
                 if (self.isDebugDumpChecked):
+                    # Dump only line-based for debug; arcs are included during creation
                     self.viaPoints = viaPoints
                     self.dumpJSON(os.path.join(self.boardPath, time.strftime("viafence-%Y%m%d-%H%M%S.json")))
         
+                # Always de-duplicate to avoid overlapping vias at fence boundaries
+                combinedViaPoints = viaPoints + viaPointsArcsAll
+                # Exact de-duplication on integer grid
+                uniq = []
+                seen = set()
+                for v in combinedViaPoints:
+                    key = (int(v[0]), int(v[1]))
+                    if key not in seen:
+                        uniq.append(v)
+                        seen.add(key)
+                # Distance-based de-duplication using via size as threshold
+                self.viaPointsSafe = dedupe_points(uniq, int(self.viaSize * 1.05))
+
                 removed = False
                 if (self.isRemoveViasWithClearanceViolationChecked):
-                #if self.mainDlg.chkRemoveViasWithClearanceViolation.GetValue():
-                    # Remove Vias that violate clearance to other things
-                    # Check against other tracks
-                    #wx.LogMessage('hereIam')
-                    # removing generated & colliding vias
-                    viaPointsSafe = []
-                    for i,v in enumerate(viaPoints):
-                        #clearance = v.GetClearance()
-                        collision_found = False
-                        tolerance = 1 + 0.2 
-                        # This should be handled with Net Clearance
-                        for j, vn in enumerate(viaPoints[i+1:]):
-                            if distance (pcbnew.wxPoint(v[0], v[1]),pcbnew.wxPoint(vn[0], vn[1])) < int(self.viaSize*tolerance): # +clearance viasize+20%:
-                                collision_found = True
-                        if not collision_found:
-                            viaPointsSafe.append(v)
-                    self.viaPointsSafe = viaPointsSafe
-                    #wx.LogMessage(str(len(self.viaPointsSafe)))
+                    # Remove vias that violate clearance with pads/tracks
                     removed = self.checkPads()
                     remvd = self.checkTracks()
                     removed = removed or remvd
-                else:
-                    self.viaPointsSafe = viaPoints
-                #wx.LogMessage(str(len(self.viaPointsSafe)))
-                #self.checkPads()
-                #wx.LogMessage(str(len(self.viaPointsSafe)))
                 viaObjList = self.createVias(self.viaPointsSafe, self.viaDrill, self.viaSize, self.viaNetId)
-                # viaObjListArcs = []
-                # if len (arcObjects) > 0:
-                #     viaObjListArcs = self.createVias(viaPointsArcs, self.viaDrill, self.viaSize, self.viaNetId)
                 if not(hasattr(pcbnew,'DRAWSEGMENT')): #creating a group of fencing vias
-                    # groupName = uuid.uuid4() #randomword(5)
-                    # pcb_group = pcbnew.PCB_GROUP(None)
-                    # pcb_group.SetName(groupName)
-                    # self.boardObj.Add(pcb_group)
                     for v in viaObjList:
                         pcb_group.AddItem(v)
-                    #for v in viaObjListArcs:
-                    #    pcb_group.AddItem(v)
                 via_nbr = len(self.viaPointsSafe)
-                via_nbr += len(viaPointsArcs)
                 msg = u'Placed {0:} Fencing Vias.\n\u26A0 Please run a DRC check on your board.'.format(str(via_nbr))
                 if removed:
                     msg += u'\n\u281B Removed DRC colliding vias.'
                 wx.LogMessage(msg)
-                #viaObjList = self.createVias(viaPoints, self.viaDrill, self.viaSize, self.viaNetId)
-                #via_nbr = len(viaPoints)
-                
             
             elif (reply == wx.ID_DELETE):
                 #user clicked ('Delete Fence Vias')
@@ -718,4 +709,4 @@ class ViaFenceAction(pcbnew.ActionPlugin):
 #            plt.ylim(plt.ylim()[::-1])
 #            plt.axes().set_aspect('equal','box')
 #            plt.show()
- 
+
