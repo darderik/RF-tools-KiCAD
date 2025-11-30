@@ -50,6 +50,46 @@ def dedupe_points(points, tol):
             unique.append(v)
     return unique
 
+# Geometry helpers for precise overlap tests (user request: avoid overlapping pads/traces, allow proximity and same-net zones)
+# Internal units.
+
+def point_segment_distance(point, start, end):
+    dx = end.x - start.x
+    dy = end.y - start.y
+    if dx == 0 and dy == 0:
+        return distance(point, start)
+    t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / float(dx*dx + dy*dy)
+    t = max(0.0, min(1.0, t))
+    cx = start.x + t * dx
+    cy = start.y + t * dy
+    return math.hypot(point.x - cx, point.y - cy)
+
+def via_track_overlaps(via_pos, via_diam, track, clearance):
+    # Overlap only if annular ring intersects copper area of track (center distance < sum of radii + clearance)
+    via_pt = pcbnew.wxPoint(int(via_pos[0]), int(via_pos[1]))
+    start = track.GetStart()
+    end = track.GetEnd()
+    track_half = track.GetWidth() / 2.0
+    via_radius = via_diam / 2.0
+    d = point_segment_distance(via_pt, start, end)
+    # Add a tiny tolerance (5%) to compensate discretization
+    tol = via_diam * 0.05
+    return d < (track_half + via_radius + clearance + tol)
+
+def via_pad_overlaps(via_pos, via_diam, pad, clearance):
+    # Simplified: treat pad as rectangle (or oval) bounding box and test center distance against half-diagonal + via radius
+    via_pt = pcbnew.wxPoint(int(via_pos[0]), int(via_pos[1]))
+    pad_center = pad.GetPosition()
+    size = pad.GetSize()
+    # Use worst case radius (half diagonal) to be conservative
+    pad_rx = size.x / 2.0
+    pad_ry = size.y / 2.0
+    pad_radius = math.hypot(pad_rx, pad_ry)  # inscribed circle of bounding box diagonal / 2
+    via_radius = via_diam / 2.0
+    d = distance(via_pt, pad_center)
+    tol = via_diam * 0.05
+    return d < (pad_radius + via_radius + clearance + tol)
+
 class ViaFenceAction(pcbnew.ActionPlugin):
     # ActionPlugin descriptive information
     def defaults(self):
@@ -148,177 +188,81 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         return self.mainDlg.EndModal(wx.ID_DELETE)
     
     def checkPads(self):
-    ##Check vias collisions with all pads => all pads on all layers
-        #wxPrint("Processing all pads...")
-        
+    ##Check vias collisions with all pads => all pads on all layers (remove any overlap regardless of net)
         if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-            self.clearance = 0 #TBF
+            self.clearance = 0
         else:
             self.clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
-        #lboard = self.boardObj.ComputeBoundingBox(False)
-        #origin = lboard.GetPosition()
-        # Create an initial rectangle: all is set to "REASON_NO_SIGNAL"
-        # get a margin to avoid out of range
-        l_clearance = self.clearance + self.viaSize #+ self.size
-        #x_limit = int((lboard.GetWidth() + l_clearance) / l_clearance) + 1
-        #y_limit = int((lboard.GetHeight() + l_clearance) / l_clearance) + 1
         viasToRemove = []
         removed = False
-        expansion = 1.6 # extra expansion to fix HitTest
         for pad in self.boardObj.GetPads():
-            #wx.LogMessage(str(self.viaPointsSafe))
-            #wx.LogMessage(str(pad.GetPosition()))
-            #local_offset = max(pad.GetClearance(), self.clearance, max_target_area_clearance) + (self.size / 2)
-            if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-                pad_clr = 0 # FIXME
-                local_offset = max(pad_clr, self.clearance) + (self.viaSize / 2)
-            else:
-                local_offset = max(pad.GetClearance(), self.clearance) + (self.viaSize / 2)
-            max_size = max(pad.GetSize().x, pad.GetSize().y)
-            
-            #start_x = int(floor(((pad.GetPosition().x - (max_size / 2.0 + local_offset)) - origin.x) / l_clearance))
-            #stop_x = int(ceil(((pad.GetPosition().x + (max_size / 2.0 + local_offset)) - origin.x) / l_clearance))
-            
-            #start_y = int(floor(((pad.GetPosition().y - (max_size / 2.0 + local_offset)) - origin.y) / l_clearance))
-            #stop_y = int(ceil(((pad.GetPosition().y + (max_size / 2.0 + local_offset)) - origin.y) / l_clearance))
-            
-            #for x in range(start_x, stop_x + 1):
-            #    for y in range(start_y, stop_y + 1):
             for viaPos in self.viaPointsSafe:
-                if 1: #try:
-                    #if isinstance(rectangle[x][y], ViaObject):
-                    #start_rect = wxPoint(origin.x + (l_clearance * x) - local_offset,
-                    #                     origin.y + (l_clearance * y) - local_offset)
-                    #start_rect = pcbnew.wxPoint(viaPos[0] + (l_clearance * viaPos[0]) - local_offset,
-                    #                    viaPos[1] + (l_clearance * viaPos[1]) - local_offset)
-                    start_rect = pcbnew.wxPoint(viaPos[0] - local_offset*expansion,
-                                        viaPos[1] - local_offset*expansion)
-                    size_rect = pcbnew.wxSize(2 * expansion * local_offset, 2 * expansion * local_offset)
-                    wxLogDebug(str(pcbnew.ToMM(start_rect))+'::'+str(pcbnew.ToMM(size_rect)),debug)
-                    if hasattr(pcbnew, 'EDA_RECT'): # kv5,kv6
-                        hTest = pcbnew.EDA_RECT(start_rect, size_rect)
-                    elif hasattr(pcbnew, 'wxPoint()'): # kv7
-                        hTest = pcbnew.BOX2I(pcbnew.VECTOR2I(int(start_rect.x), int(start_rect.y)),
-                                             pcbnew.VECTOR2I(int(size_rect.x), int(size_rect.y)))
-                    else: #kv8
-                        hTest = pcbnew.BOX2I(pcbnew.VECTOR2I(int(viaPos[0] - local_offset*expansion),int(viaPos[1] - local_offset*expansion)), pcbnew.VECTOR2I(int(2 * expansion * local_offset),int(2 * expansion * local_offset)))
-                        #hTest = pcbnew.BOX2I(start_rect, size_rect)
-                    if pad.HitTest(hTest, False):
-                        #rectangle[x][y] = self.REASON_PAD
-                        wxLogDebug('Hit on Pad: viaPos:'+str(viaPos),debug)
-                        #self.viaPointsSafe.pop(i)
-                        #self.viaPointsSafe.remove(viaPos)
+                try:
+                    if via_pad_overlaps(viaPos, self.viaSize, pad, self.clearance):
+                        wxLogDebug('Pad overlap -> removing via at {}'.format(viaPos), debug)
                         viasToRemove.append(viaPos)
                         removed = True
-                    #else:
-                    #    viaPSafe.append(viaPos)
-                else: #except:
-                    wx.LogMessage("exception on Processing all pads...")
-                #i+=1
-            #self.viaPointSafe = viaPSafe
-        #wx.LogMessage(str(viasToRemove))
-        newPoints = [p for p in self.viaPointsSafe if p not in viasToRemove]
-        #wx.LogMessage(str(newPoints))
-        #wx.LogMessage(str(len(newPoints)))
-        self.viaPointsSafe = newPoints
+                except Exception as exc:
+                    wxLogDebug('Pad check exception: {}'.format(exc), debug)
+        if viasToRemove:
+            self.viaPointsSafe = [p for p in self.viaPointsSafe if p not in viasToRemove]
         return removed
-        
+
     def checkTracks(self):
-    ##Check vias collisions with all tracks
+    ##Check vias collisions with tracks (avoid overlapping copper; allow proximity). Overlap allowed only with same-net zones (not implemented yet) but here we distinguish nets.
         if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-            self.clearance = 0 #TBF
+            self.clearance = 0
         else:
             self.clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
-        #lboard = self.boardObj.ComputeBoundingBox(False)
-        #origin = lboard.GetPosition()
-        # Create an initial rectangle: all is set to "REASON_NO_SIGNAL"
-        # get a margin to avoid out of range
-        l_clearance = self.clearance + self.viaSize #+ self.size
-        #wxLogDebug(str(l_clearance),True)
-        #x_limit = int((lboard.GetWidth() + l_clearance) / l_clearance) + 1
-        #y_limit = int((lboard.GetHeight() + l_clearance) / l_clearance) + 1
         viasToRemove = []
         removed = False
-        expansion = 2 # extra expansion to fix HitTest
+        if (hasattr(pcbnew,'DRAWSEGMENT')):
+            trk_type = pcbnew.TRACK
+        else:
+            trk_type = pcbnew.PCB_TRACK
         for track in self.boardObj.GetTracks():
-            #wx.LogMessage(str(self.viaPointsSafe))
-            #wx.LogMessage(str(pad.GetPosition()))
-            #local_offset = max(pad.GetClearance(), self.clearance, max_target_area_clearance) + (self.size / 2)
-            if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-                trk_clr = 0 # FIXME
-                #trk_clr = track.GetClearance()
-                local_offset = max(trk_clr, self.clearance) + (self.viaSize / 2)
-            else:
-                local_offset = max(track.GetClearance(), self.clearance) + (self.viaSize / 2)
-            #wxLogDebug(str(max_size),True)
-            #max_size = max(pad.GetSize().x, pad.GetSize().y)
-            
-            #start_x = int(floor(((pad.GetPosition().x - (max_size / 2.0 + local_offset)) - origin.x) / l_clearance))
-            #stop_x = int(ceil(((pad.GetPosition().x + (max_size / 2.0 + local_offset)) - origin.x) / l_clearance))
-            
-            #start_y = int(floor(((pad.GetPosition().y - (max_size / 2.0 + local_offset)) - origin.y) / l_clearance))
-            #stop_y = int(ceil(((pad.GetPosition().y + (max_size / 2.0 + local_offset)) - origin.y) / l_clearance))
-            
-            #for x in range(start_x, stop_x + 1):
-            #    for y in range(start_y, stop_y + 1):
-            #wx.LogMessage(str(getTrackAngleRadians(track)))
-            angle = abs(math.degrees(getTrackAngleRadians(track)))
-            if (angle > 15 and angle <75) or (angle > 105 and angle <165) or (angle > 195 and angle <255) or (angle > 285 and angle <345):
-                expansion = 1.4 # extra expansion to fix HitTest
-                #wx.LogMessage(str(angle)+'::'+str(expansion))
-            else:
-                expansion = 2.0 # extra expansion to fix HitTest
-                #wx.LogMessage(str(angle)+'::'+str(expansion))
+            if type(track) != trk_type:
+                continue
             for viaPos in self.viaPointsSafe:
-                if 1: #try:
-                    #if isinstance(rectangle[x][y], ViaObject):
-                    #start_rect = wxPoint(origin.x + (l_clearance * x) - local_offset,
-                    #                     origin.y + (l_clearance * y) - local_offset)
-                    #start_rect = pcbnew.wxPoint(viaPos[0] + (l_clearance * viaPos[0]) - local_offset,
-                    #                    viaPos[1] + (l_clearance * viaPos[1]) - local_offset)
-                    start_rect = pcbnew.wxPoint(viaPos[0] - local_offset*expansion,
-                                        viaPos[1] - local_offset*expansion)
-                    size_rect = pcbnew.wxSize(2 * expansion * local_offset, 2 * expansion * local_offset)
-                    wxLogDebug(str(pcbnew.ToMM(start_rect))+'::'+str(pcbnew.ToMM(size_rect)),debug)
-                    #wxLogDebug(str(track.GetNetCode()),True)
-                    #wxLogDebug(str(self.viaNetId),True)
-                    #wxLogDebug(str(type(track)),True)
-                    if (hasattr(pcbnew,'DRAWSEGMENT')):
-                        trk_type = pcbnew.TRACK
-                    else:
-                        trk_type = pcbnew.PCB_TRACK
-                    aContained = True
-                    aAccuracy = 0
-                    if track.GetNetCode() != self.viaNetId or type(track) != trk_type: #PCB_VIA_T:
-                        #wxLogDebug('here',True)
-                        #if track.HitTest(pcbnew.EDA_RECT(start_rect, size_rect), False):
-                        aContained=False;aAccuracy=0
-                    if hasattr(pcbnew, 'EDA_RECT'): # kv5,kv6
-                        hTest = pcbnew.EDA_RECT(start_rect, size_rect)
-                    elif hasattr(pcbnew, 'wxPoint()'): # kv7
-                        hTest = pcbnew.BOX2I(pcbnew.VECTOR2I(start_rect), pcbnew.VECTOR2I(size_rect))
-                    else: #kv8
-                        hTest = pcbnew.BOX2I(pcbnew.VECTOR2I(int(start_rect.x), int(start_rect.y)),
-                                             pcbnew.VECTOR2I(int(size_rect.x), int(size_rect.y)))                        
-                    if track.HitTest(hTest, aContained, aAccuracy):
-                            #rectangle[x][y] = self.REASON_PAD
-                            wxLogDebug('Hit on Track: viaPos:'+str(viaPos),debug)
-                            #self.viaPointsSafe.pop(i)
-                            #self.viaPointsSafe.remove(viaPos)
-                            viasToRemove.append(viaPos)
-                            removed = True
-                        #else:
-                        #    viaPSafe.append(viaPos)
-                else: #except:
-                    wx.LogMessage("exception on Processing all tracks...")
-                #i+=1
-            #self.viaPointSafe = viaPSafe
-        #wx.LogMessage(str(viasToRemove))
-        newPoints = [p for p in self.viaPointsSafe if p not in viasToRemove]
-        #wx.LogMessage(str(newPoints))
-        #wx.LogMessage(str(len(newPoints)))
-        self.viaPointsSafe = newPoints
+                try:
+                    # For tracks of the same net as the via, be strict on physical overlap only (no extra clearance)
+                    extra_clearance = 0 if track.GetNetCode() == self.viaNetId else self.clearance
+                    if via_track_overlaps(viaPos, self.viaSize, track, extra_clearance):
+                        wxLogDebug('Track overlap(net:{} viaNet:{}) -> removing via {}'.format(track.GetNetCode(), self.viaNetId, viaPos), debug)
+                        viasToRemove.append(viaPos)
+                        removed = True
+                except Exception as exc:
+                    wxLogDebug('Track check exception: {}'.format(exc), debug)
+        if viasToRemove:
+            self.viaPointsSafe = [p for p in self.viaPointsSafe if p not in viasToRemove]
         return removed
+
+    # Missing earlier, define precise per-via filter now
+    def filter_vias_precise(self, candidate_points):
+        """Return list of via points not overlapping any pad or track. Uses geometric tests defined above."""
+        if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
+            clearance = 0
+        else:
+            clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
+        pads = list(self.boardObj.GetPads())
+        if (hasattr(pcbnew,'DRAWSEGMENT')):
+            trk_type = pcbnew.TRACK
+        else:
+            trk_type = pcbnew.PCB_TRACK
+        tracks = [t for t in self.boardObj.GetTracks() if type(t) is trk_type]
+        accepted = []
+        for pt in candidate_points:
+            # Pad overlap check
+            pad_collision = any(via_pad_overlaps(pt, self.viaSize, pad, clearance) for pad in pads)
+            if pad_collision:
+                wxLogDebug('Reject via at {} (pad overlap precise)'.format(pt), debug)
+                continue
+            track_collision = any(via_track_overlaps(pt, self.viaSize, trk, clearance) for trk in tracks)
+            if track_collision:
+                wxLogDebug('Reject via at {} (track overlap precise)'.format(pt), debug)
+                continue
+            accepted.append(pt)
+        return accepted
 # ------------------------------------------------------------------------------------
     
     def DoKeyPress(self, event):
@@ -385,149 +329,99 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         #check for pyclipper lib
         pyclip = False
         try:
-            import pyclipper
+            import pyclipper  # runtime import; may not resolve in static analysis
             pyclip = True
-            # import pyclipper; pyclipper.__file__
-        except:
-            #error exception if pyclipper lib is missing
+        except Exception:
             import sys, os
             from sys import platform as _platform
             if sys.version_info.major == 2 and sys.version_info.minor == 7:
                 if _platform == "linux" or _platform == "linux2":
-                    # linux
-                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),'python-pyclipper','py2-7-linux-64'))
+                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'python-pyclipper', 'py2-7-linux-64'))
                 elif _platform == "darwin":
-                    #osx
-                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),'python-pyclipper','py2-7-mac-64'))
+                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'python-pyclipper', 'py2-7-mac-64'))
                 else:
-                    #win
-                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),'python-pyclipper','py2-7-win-64'))
+                    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'python-pyclipper', 'py2-7-win-64'))
             try:
                 import pyclipper
                 pyclip = True
-            except:
-                msg = u"\u2718 ERROR Missing KiCAD \'pyclipper\' python module:\nplease install it using pip\nin your KiCAD python environment.\n[You may need administrative rights]"
-                wdlg = wx.MessageDialog(None, msg,'ERROR message',wx.OK | wx.ICON_WARNING)# wx.ICON_ERROR)
-                result = wdlg.ShowModal()
+            except Exception:
+                msg = u"\u2718 ERROR Missing KiCAD 'pyclipper' python module:\nplease install it using pip\nin your KiCAD python environment.\n[You may need administrative rights]"
+                wdlg = wx.MessageDialog(None, msg, 'ERROR message', wx.OK | wx.ICON_WARNING)
+                wdlg.ShowModal()
         if pyclip:
-        #import pyclipper
             import os
-            #self.mainDlg = MainDialog(None)
-            #self.selfToMainDialog()
             import random, string
-
             def randomword(length):
                 letters = string.ascii_lowercase
-                return ''.join(random.choice(letters) for i in range(length))
-            def randomnum (length):
+                return ''.join(random.choice(letters) for _ in range(length))
+            def randomnum(length):
                 return ''.join(random.sample('0123456789', length))
-            
             self.boardObj = pcbnew.GetBoard()
             self.boardDesignSettingsObj = self.boardObj.GetDesignSettings()
             self.boardPath = os.path.dirname(os.path.realpath(self.boardObj.GetFileName()))
             self.layerMap = self.getLayerMap()
             if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
                 self.highlightedNetId = -1
-                # Nasty work around... GetHighLightNetCodes returns a swig object >_<
-                # hl_nets = filter(lambda x: x.IsSelected(), self.boardObj.GetTracks())
-                # hl_net_codes = set(net.GetNetCode() for net in hl_nets)
-                # if len(hl_net_codes) == 1:
-                #     self.highlightedNetId = hl_net_codes.pop()
-                # else:
-                #     wdlg = wx.MessageDialog(None, u"\u2718 ERROR Please only select one net",'ERROR message',wx.OK | wx.ICON_WARNING)# wx.ICON_ERROR)
-                #     result = wdlg.ShowModal()
-                #     return
             else:
                 self.highlightedNetId = self.boardObj.GetHighLightNetCode()
             self.netMap = self.getNetMap()
             self.netFilterList = self.createNetFilterSuggestions()
             self.netFilter = self.netMap[self.highlightedNetId].GetNetname() if self.highlightedNetId != -1 else self.netFilterList[0]
             self.viaSize = self.boardDesignSettingsObj.GetCurrentViaSize()
-            self.layerId = 0 #TODO: How to get currently selected layer?
+            self.layerId = 0
             self.viaDrill = self.boardDesignSettingsObj.GetCurrentViaDrill()
             self.viaPitch = pcbnew.FromMM(1.3)
             self.viaOffset = pcbnew.FromMM(1.3)
-            self.viaNetId = 0 #TODO: Maybe a better init value here. Try to find "GND" maybe?
+            self.viaNetId = 0
             self.isNetFilterChecked = 1 if self.highlightedNetId != -1 else 0
-            #if len(list(self.netMap.keys())) > 0:
-            #    self.viaNetId = list(self.netMap.keys())[self.mainDlg.lstViaNet.GetSelection()]   #maui
-        
             self.isLayerChecked = 0
             self.isIncludeDrawingChecked = 0
             self.isIncludeSelectionChecked = 1
             self.isDebugDumpChecked = 0
             self.isRemoveViasWithClearanceViolationChecked = 1
             self.isSameNetZoneViasOnlyChecked = 0
-        
             self.mainDlg = MainDialog(None)
             self.selfToMainDialog()
             self.local_config_file = os.path.join(os.path.dirname(__file__), 'vf_config.ini')
             config = configparser.ConfigParser()
             config.read(self.local_config_file)
-            # self.width = int(config.get('win_size','width'))
-            # self.height = int(config.get('win_size','height'))
-            #self.m_clearanceMM.SetValue(config.get('params','clearance'))
-            ## self.mainDlg.SetSize(100,100) #self.width,self.height)
-            
             if hasattr(self.boardObj, 'm_Uuid'):
                 self.mainDlg.m_buttonDelete.Disable()
                 self.mainDlg.m_buttonDelete.SetToolTip( u"fencing vias are placed in a group,\nto delete fencing vias, just delete the group" )
             reply = self.mainDlg.ShowModal()
             if (reply == wx.ID_OK):
-                # User pressed OK.
-                # Assemble a list of pcbnew.BOARD_ITEMs derived objects that support GetStart/GetEnd and IsOnLayer
                 self.mainDialogToSelf()
                 lineObjects = []
                 arcObjects = []
-        
-                # creating a unique group for vias
-                if not(hasattr(pcbnew,'DRAWSEGMENT')): #creating a group of fencing vias
-                    # self.netName=self.netMap.currentText()
-                    # groupName = str(uuid.uuid4()) #randomword(5)
+                pcb_group = None  # ensure defined
+                if not(hasattr(pcbnew,'DRAWSEGMENT')):
                     VIA_GROUP_NAME = "ViaFencing_{}".format(randomnum(3))
                     pcb_group = pcbnew.PCB_GROUP(None)
-                    #pcb_group.SetName(groupName)
                     pcb_group.SetName(VIA_GROUP_NAME)
                     self.boardObj.Add(pcb_group)
-                #else:
-                #    VIA_GROUP_NAME = "ViaFencing {}".format(self.netName)
-                #    pcb_group = pcbnew.PCB_GROUP(None)
-                #    pcb_group.SetName(VIA_GROUP_NAME)
-                #    self.boardObj.Add(pcb_group)
-                        
-                # Accumulate vias generated from arcs to de-duplicate later with line vias
                 viaPointsArcsAll = []
-                
-                # Do we want to include net tracks?
                 if (self.isNetFilterChecked):
-                    # Find nets that match the generated regular expression and add their tracks to the list
                     netRegex = self.regExFromSimpleEx(self.netFilter)
                     for netId in self.netMap:
                         if re.match(netRegex, self.netMap[netId].GetNetname()):
                             for trackObject in self.boardObj.TracksInNet(netId):
-                                #wx.LogMessage('type '+str(trackObject.GetStart()))
-                                #wx.LogMessage('type '+str(trackObject.GetMid()))
                                 if (hasattr(pcbnew,'DRAWSEGMENT')):
                                     trk_type = pcbnew.TRACK
                                 else:
                                     trk_type = pcbnew.PCB_TRACK
-                                    trk_arc  = pcbnew.PCB_ARC
+                                    trk_arc = pcbnew.PCB_ARC
                                 if hasattr(trackObject,'GetMid()'):
                                     arcObjects += [trackObject]
                                 elif type(trackObject) is trk_type:
                                     lineObjects += [trackObject]
-                                
-                    # wx.LogMessage('net selected '+str(lineObjects))
-                    # wx.LogMessage('net selected '+str(arcObjects))
-        
-                # Do we want to include drawing segments?
                 if (self.isIncludeDrawingChecked):
+                    boardItems = []  # predefine to silence potential unbound warning
                     if hasattr(self.boardObj.GetDrawings, 'GetFirst'):
                         boardItem = self.boardObj.GetDrawings().GetFirst()
                     else:
                         self.boardObj.GetDrawings().sort
-                        boardItem = self.boardObj.GetDrawings()[0]
                         boardItems = self.boardObj.GetDrawings()
+                        boardItem = boardItems[0] if boardItems else None
                     i = 0
                     while boardItem is not None:
                         if hasattr(pcbnew,'DRAWSEGMENT'):
@@ -543,103 +437,68 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                         if hasattr(pcbnew,'DRAWSEGMENT'):
                             boardItem = boardItem.Next()
                         else:
-                            if i < len(boardItems)-1:
-                                i+=1
-                                boardItem = self.boardObj.GetDrawings()[i]
+                            if i < len(boardItems) - 1:
+                                i += 1
+                                boardItem = boardItems[i]
                             else:
                                 boardItem = None
-                # Do we want to include track segments?
                 if (self.isIncludeSelectionChecked):
                     if (hasattr(pcbnew,'DRAWSEGMENT')):
                         trk_type = pcbnew.TRACK
+                        trk_arc = None
                     else:
                         trk_type = pcbnew.PCB_TRACK
-                        trk_arc  = pcbnew.PCB_ARC
+                        trk_arc = pcbnew.PCB_ARC
                     for item in self.boardObj.GetTracks():
-                        #wx.LogMessage('type track: %s' % str(type(item)))
-                        if not (hasattr(pcbnew,'DRAWSEGMENT')):
-                            if type(item) is trk_arc and item.IsSelected():
-                                wx.LogMessage('type track: %s' % str(type(item)))
-                                arcObjects += [item]
+                        if trk_arc and type(item) is trk_arc and item.IsSelected():
+                            arcObjects += [item]
                         if type(item) is trk_type and item.IsSelected():
                             lineObjects += [item]
-                    
-                # Do we want to filter the generated lines by layer?
                 if (self.isLayerChecked):
-                    # Filter by layer
-                    # TODO: Make layer selection also a regex
-                    lineObjects = [lineObject for lineObject in lineObjects if lineObject.IsOnLayer(self.layerId)]
-                    arcObjects = [arcObject for arcObject in arcObjects if arcObject.IsOnLayer(self.layerId)]
-                #wx.LogMessage('arcs: %s' % str(arcObjects))
-                
+                    lineObjects = [lo for lo in lineObjects if lo.IsOnLayer(self.layerId)]
+                    arcObjects = [ao for ao in arcObjects if ao.IsOnLayer(self.layerId)]
                 for arc in arcObjects:
                     segNBR = 16
-                    start = arc.GetStart()
-                    end = arc.GetEnd()
-                    md = arc.GetMid()
-                    width = arc.GetWidth()
-                    layer = arc.GetLayerSet()
-                    netName = None
-                    cnt, rad = getCircleCenterRadius(start,end,md)
-                    pts = create_round_pts(start,end,cnt,rad,layer,width,netName,segNBR)
-                    self.pathListArcs =  [[ [p.x, p.y],
-                                    [pts[i+1].x, pts[i+1].y]   ]
-                                    for i,p in enumerate(pts[:-1])]
-                    # Generate via fence
+                    start = arc.GetStart(); end = arc.GetEnd(); md = arc.GetMid(); width = arc.GetWidth(); layer = arc.GetLayerSet(); netName = None
+                    cnt, rad = getCircleCenterRadius(start, end, md)
+                    pts = create_round_pts(start, end, cnt, rad, layer, width, netName, segNBR)
+                    self.pathListArcs = [[[p.x, p.y], [pts[i+1].x, pts[i+1].y]] for i, p in enumerate(pts[:-1])]
                     try:
-                        if len (arcObjects) > 0:
+                        if len(arcObjects) > 0:
                             viaPointsArcs = generateViaFence(self.pathListArcs, self.viaOffset, self.viaPitch)
-                            # Defer creation; accumulate for global de-duplication
                             viaPointsArcsAll.extend(viaPointsArcs)
                     except Exception as exc:
-                        wx.LogMessage('exception on via fence generation: %s' % str(exc))
-                        import traceback
-                        wx.LogMessage(traceback.format_exc())
-                        #viaPointsArcs = []
-                #wx.LogMessage('pts: %s' % str(pts))
-                
-                # Generate a path list from the pcbnew.BOARD_ITEM objects
-                self.pathList =  [[ [lineObject.GetStart()[0], lineObject.GetStart()[1]],
-                                    [lineObject.GetEnd()[0],   lineObject.GetEnd()[1]]   ]
-                                    for lineObject in lineObjects]
-                #wx.LogMessage('pL: %s' % str(self.pathList))
-                                    
-                
-                # Generate via fence (lines)
+                        wx.LogMessage('exception on via fence generation: {}'.format(exc))
+                        import traceback; wx.LogMessage(traceback.format_exc())
+                self.pathList = [[[lo.GetStart()[0], lo.GetStart()[1]], [lo.GetEnd()[0], lo.GetEnd()[1]]] for lo in lineObjects]
                 try:
                     viaPoints = generateViaFence(self.pathList, self.viaOffset, self.viaPitch)
                 except Exception as exc:
-                    wx.LogMessage('exception on via fence generation: %s' % str(exc))
-                    import traceback
-                    wx.LogMessage(traceback.format_exc())
-                    viaPoints = []
-        
+                    wx.LogMessage('exception on via fence generation: {}'.format(exc))
+                    import traceback; wx.LogMessage(traceback.format_exc()); viaPoints = []
                 if (self.isDebugDumpChecked):
-                    # Dump only line-based for debug; arcs are included during creation
                     self.viaPoints = viaPoints
                     self.dumpJSON(os.path.join(self.boardPath, time.strftime("viafence-%Y%m%d-%H%M%S.json")))
-        
-                # Always de-duplicate to avoid overlapping vias at fence boundaries
                 combinedViaPoints = viaPoints + viaPointsArcsAll
-                # Exact de-duplication on integer grid
                 uniq = []
                 seen = set()
                 for v in combinedViaPoints:
                     key = (int(v[0]), int(v[1]))
                     if key not in seen:
-                        uniq.append(v)
-                        seen.add(key)
-                # Distance-based de-duplication using via size as threshold
+                        uniq.append(v); seen.add(key)
                 self.viaPointsSafe = dedupe_points(uniq, int(self.viaSize * 1.05))
-
                 removed = False
                 if (self.isRemoveViasWithClearanceViolationChecked):
-                    # Remove vias that violate clearance with pads/tracks
                     removed = self.checkPads()
-                    remvd = self.checkTracks()
-                    removed = removed or remvd
+                    remvd = self.checkTracks(); removed = removed or remvd
+                # Per-via final precise filtering (ensures no overlaps remain)
+                before_cnt = len(self.viaPointsSafe)
+                self.viaPointsSafe = self.filter_vias_precise(self.viaPointsSafe)
+                if len(self.viaPointsSafe) < before_cnt:
+                    removed = True
+                    wxLogDebug('Filtered {} overlapping vias (precise pass)'.format(before_cnt - len(self.viaPointsSafe)), debug)
                 viaObjList = self.createVias(self.viaPointsSafe, self.viaDrill, self.viaSize, self.viaNetId)
-                if not(hasattr(pcbnew,'DRAWSEGMENT')): #creating a group of fencing vias
+                if pcb_group is not None:
                     for v in viaObjList:
                         pcb_group.AddItem(v)
                 via_nbr = len(self.viaPointsSafe)
@@ -647,40 +506,22 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                 if removed:
                     msg += u'\n\u281B Removed DRC colliding vias.'
                 wx.LogMessage(msg)
-            
             elif (reply == wx.ID_DELETE):
-                #user clicked ('Delete Fence Vias')
-                target_tracks = filter(lambda x: ((x.Type() == pcbnew.PCB_VIA_T)and (x.GetTimeStamp() == 55)), self.boardObj.GetTracks())
-                #wx.LogMessage(str(len(target_tracks)))
-                target_tracks_cp = list(target_tracks)
-                l = len (target_tracks_cp)
-                for i in range(l): 
-                    #if type(target_tracks_cp[i]) is PCB_TRACK and target_tracks_cp[i].IsSelected(): #item.GetNetname() == net_name:
-                    self.boardObj.RemoveNative(target_tracks_cp[i])  #removing via
-                #for via in target_tracks:
-                #    #if via.GetTimeStamp() == 55:
-                #    self.boardObj.RemoveNative(via)
-                #    #wx.LogMessage('removing via')
-                #pcbnew.Refresh()
+                # Delete previous fencing vias by timestamp marker
+                target_tracks = filter(lambda x: ((x.Type() == pcbnew.PCB_VIA_T) and (x.GetTimeStamp() == 55)), self.boardObj.GetTracks())
+                for via in list(target_tracks):
+                    self.boardObj.RemoveNative(via)
             self.local_config_file = os.path.join(os.path.dirname(__file__), 'vf_config.ini')
-            config = configparser.ConfigParser()
-            config.read(self.local_config_file)
-            # config['win_size']['width'] = str(self.mainDlg.GetSize()[0])
-            # config['win_size']['height'] = str(self.mainDlg.GetSize()[1])
-            
+            config = configparser.ConfigParser(); config.read(self.local_config_file)
             config['params']['offset'] = self.mainDlg.txtViaOffset.GetValue()
             config['params']['pitch'] = self.mainDlg.txtViaPitch.GetValue()
             config['params']['via_drill'] = self.mainDlg.txtViaDrill.GetValue()
             config['params']['via_size'] = self.mainDlg.txtViaSize.GetValue()
-            
             config['options']['include_selected'] = str(self.mainDlg.chkIncludeSelection.GetValue())
             config['options']['include_drawings'] = str(self.mainDlg.chkIncludeDrawing.GetValue())
             config['options']['remove_violations'] = str(self.mainDlg.chkRemoveViasWithClearanceViolation.GetValue())
-        
             with open(self.local_config_file, 'w') as configfile:
                 config.write(configfile)
-            
-            #wx.LogMessage('end')
             self.mainDlg.Destroy()  #the Dlg needs to be destroyed to release pcbnew
 
 # TODO: Implement
