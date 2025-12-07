@@ -90,6 +90,16 @@ def via_pad_overlaps(via_pos, via_diam, pad, clearance):
     tol = via_diam * 0.05
     return d < (pad_radius + via_radius + clearance + tol)
 
+# New helper: via-via overlap
+def via_via_overlaps(via_pos, new_via_diam, existing_via, clearance):
+    center2 = existing_via.GetPosition()
+    via_pt = pcbnew.wxPoint(int(via_pos[0]), int(via_pos[1]))
+    r_new = new_via_diam / 2.0
+    r_old = existing_via.GetWidth() / 2.0
+    d = distance(via_pt, center2)
+    tol = new_via_diam * 0.05
+    return d < (r_new + r_old + clearance + tol)
+
 class ViaFenceAction(pcbnew.ActionPlugin):
     # ActionPlugin descriptive information
     def defaults(self):
@@ -239,12 +249,18 @@ class ViaFenceAction(pcbnew.ActionPlugin):
 
     # Missing earlier, define precise per-via filter now
     def filter_vias_precise(self, candidate_points):
-        """Return list of via points not overlapping any pad or track. Uses geometric tests defined above."""
+        """Return list of via points not overlapping any pad, track, or existing via."""
         if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
             clearance = 0
         else:
             clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
         pads = list(self.boardObj.GetPads())
+        # collect existing vias
+        if hasattr(pcbnew,'VIA'):
+            via_type = pcbnew.VIA
+        else:
+            via_type = pcbnew.PCB_VIA
+        existing_vias = [t for t in self.boardObj.GetTracks() if isinstance(t, via_type)]
         if (hasattr(pcbnew,'DRAWSEGMENT')):
             trk_type = pcbnew.TRACK
         else:
@@ -252,15 +268,12 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         tracks = [t for t in self.boardObj.GetTracks() if type(t) is trk_type]
         accepted = []
         for pt in candidate_points:
-            # Pad overlap check
-            pad_collision = any(via_pad_overlaps(pt, self.viaSize, pad, clearance) for pad in pads)
-            if pad_collision:
-                wxLogDebug('Reject via at {} (pad overlap precise)'.format(pt), debug)
-                continue
-            track_collision = any(via_track_overlaps(pt, self.viaSize, trk, clearance) for trk in tracks)
-            if track_collision:
-                wxLogDebug('Reject via at {} (track overlap precise)'.format(pt), debug)
-                continue
+            if any(via_pad_overlaps(pt, self.viaSize, pad, clearance) for pad in pads):
+                wxLogDebug('Reject via at {} (pad overlap precise)'.format(pt), debug); continue
+            if any(via_track_overlaps(pt, self.viaSize, trk, clearance) for trk in tracks):
+                wxLogDebug('Reject via at {} (track overlap precise)'.format(pt), debug); continue
+            if any(via_via_overlaps(pt, self.viaSize, ev, clearance) for ev in existing_vias):
+                wxLogDebug('Reject via at {} (existing via overlap)'.format(pt), debug); continue
             accepted.append(pt)
         return accepted
 # ------------------------------------------------------------------------------------
