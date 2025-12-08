@@ -35,7 +35,7 @@ class MainDialogBase ( wx.Dialog ):
 
 		sbSizer2 = wx.StaticBoxSizer( wx.StaticBox( self, wx.ID_ANY, u"Via Settings" ), wx.VERTICAL )
 
-		fgSizer4 = wx.FlexGridSizer( 8, 2, 0, 0 )
+		fgSizer4 = wx.FlexGridSizer( 9, 2, 0, 0 )
 		fgSizer4.AddGrowableCol( 1 )
 		fgSizer4.SetFlexibleDirection( wx.BOTH )
 		fgSizer4.SetNonFlexibleGrowMode( wx.FLEX_GROWMODE_SPECIFIED )
@@ -55,6 +55,14 @@ class MainDialogBase ( wx.Dialog ):
 
 		self.txtViaPitch = wx.TextCtrl( sbSizer2.GetStaticBox(), wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.TE_PROCESS_ENTER|wx.TE_RIGHT )
 		fgSizer4.Add( self.txtViaPitch, 0, wx.ALL|wx.EXPAND, 5 )
+
+		self.m_staticTextInterRow = wx.StaticText( sbSizer2.GetStaticBox(), wx.ID_ANY, u"Inter-row Offset (mm):", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticTextInterRow.Wrap( -1 )
+
+		fgSizer4.Add( self.m_staticTextInterRow, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5 )
+
+		self.txtInterRowOffset = wx.TextCtrl( sbSizer2.GetStaticBox(), wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.TE_PROCESS_ENTER|wx.TE_RIGHT )
+		fgSizer4.Add( self.txtInterRowOffset, 0, wx.ALL|wx.EXPAND, 5 )
 
 		self.m_staticText13 = wx.StaticText( sbSizer2.GetStaticBox(), wx.ID_ANY, u"Via Drill (mm):", wx.DefaultPosition, wx.DefaultSize, 0 )
 		self.m_staticText13.Wrap( -1 )
@@ -81,6 +89,14 @@ class MainDialogBase ( wx.Dialog ):
 		self.lstViaNet = wx.Choice( sbSizer2.GetStaticBox(), wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, lstViaNetChoices, 0 )
 		self.lstViaNet.SetSelection( 0 )
 		fgSizer4.Add( self.lstViaNet, 1, wx.EXPAND|wx.ALL, 5 )
+
+		self.m_staticText24 = wx.StaticText( sbSizer2.GetStaticBox(), wx.ID_ANY, u"Fence Rows/side:", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText24.Wrap( -1 )
+
+		fgSizer4.Add( self.m_staticText24, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5 )
+
+		self.spnFenceRows = wx.SpinCtrl( sbSizer2.GetStaticBox(), wx.ID_ANY, u"1", wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 1, 8, 1 )
+		fgSizer4.Add( self.spnFenceRows, 0, wx.ALL|wx.EXPAND, 5 )
 
 
 		sbSizer2.Add( fgSizer4, 1, wx.EXPAND, 5 )

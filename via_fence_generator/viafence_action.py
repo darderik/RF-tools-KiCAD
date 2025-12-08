@@ -17,7 +17,7 @@ from collections import OrderedDict
 from .viafence import *
 from .viafence_dialogs import *
 
-debug = False
+debug = False  # Set to True to see detailed filtering logs
 temporary_fix = True
 
 def wxLogDebug(msg,show):
@@ -201,10 +201,18 @@ class ViaFenceAction(pcbnew.ActionPlugin):
     
     def checkPads(self):
     ##Check vias collisions with all pads => all pads on all layers (remove any overlap regardless of net)
-        if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-            self.clearance = 0
-        else:
-            self.clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
+        # Get DRC clearance - KiCad 9 uses GetClearanceConstraint
+        design_settings = self.boardObj.GetDesignSettings()
+        try:
+            # Try KiCad 9 API first
+            clearance = design_settings.GetClearanceConstraint()
+        except AttributeError:
+            try:
+                # Try KiCad 5-8 API
+                clearance = design_settings.GetDefault().GetClearance()
+            except AttributeError:
+                # Fallback to 0
+                clearance = 0
         viasToRemove = []
         removed = False
         for pad in self.boardObj.GetPads():
@@ -222,10 +230,18 @@ class ViaFenceAction(pcbnew.ActionPlugin):
 
     def checkTracks(self):
     ##Check vias collisions with tracks (avoid overlapping copper on all nets)
-        if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-            self.clearance = 0
-        else:
-            self.clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
+        # Get DRC clearance - KiCad 9 uses GetClearanceConstraint
+        design_settings = self.boardObj.GetDesignSettings()
+        try:
+            # Try KiCad 9 API first
+            self.clearance = design_settings.GetClearanceConstraint()
+        except AttributeError:
+            try:
+                # Try KiCad 5-8 API
+                self.clearance = design_settings.GetDefault().GetClearance()
+            except AttributeError:
+                # Fallback to 0
+                self.clearance = 0
         viasToRemove = []
         removed = False
         if (hasattr(pcbnew,'DRAWSEGMENT')):
@@ -260,10 +276,19 @@ class ViaFenceAction(pcbnew.ActionPlugin):
     # Missing earlier, define precise per-via filter now
     def filter_vias_precise(self, candidate_points):
         """Return list of via points not overlapping any pad, track, or existing via."""
-        if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
-            clearance = 0
-        else:
-            clearance = self.boardObj.GetDesignSettings().GetDefault().GetClearance()
+        # Get DRC clearance - KiCad 9 uses GetClearanceConstraint
+        design_settings = self.boardObj.GetDesignSettings()
+        try:
+            # Try KiCad 9 API first
+            clearance = design_settings.GetClearanceConstraint()
+        except AttributeError:
+            try:
+                # Try KiCad 5-8 API
+                clearance = design_settings.GetDefault().GetClearance()
+            except AttributeError:
+                # Fallback to 0
+                clearance = 0
+        
         pads = list(self.boardObj.GetPads())
         # collect existing vias
         if hasattr(pcbnew,'VIA'):
@@ -276,15 +301,50 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         else:
             trk_type = pcbnew.PCB_TRACK
         tracks = [t for t in self.boardObj.GetTracks() if type(t) is trk_type]
+        
+        wxLogDebug('filter_vias_precise: Testing {} candidate vias, {} tracks, {} pads, {} existing_vias'.format(
+            len(candidate_points), len(tracks), len(pads), len(existing_vias)), debug)
+        
         accepted = []
+        rejected_reasons = {'pad': 0, 'same_net_track': 0, 'diff_net_track': 0, 'existing_via': 0}
+        
         for pt in candidate_points:
             if any(via_pad_overlaps(pt, self.viaSize, pad, clearance) for pad in pads):
-                wxLogDebug('Reject via at {} (pad overlap precise)'.format(pt), debug); continue
-            if any(via_track_overlaps(pt, self.viaSize, trk, clearance) for trk in tracks):
-                wxLogDebug('Reject via at {} (track overlap precise)'.format(pt), debug); continue
+                wxLogDebug('  Reject via at [{:.0f}, {:.0f}] - pad overlap'.format(pt[0], pt[1]), debug)
+                rejected_reasons['pad'] += 1
+                continue
+            # Apply same clearance logic as checkTracks: same-net gets 0.5mm min, different nets get full DRC
+            reject_track = False
+            for trk in tracks:
+                if trk.GetNetCode() == self.viaNetId:
+                    # Same net: use minimum 0.5mm clearance
+                    min_same_net_clearance = max(pcbnew.FromMM(0.5), clearance // 2)
+                    if via_track_overlaps(pt, self.viaSize, trk, min_same_net_clearance):
+                        wxLogDebug('  Reject via at [{:.0f}, {:.0f}] - same-net track overlap (clearance={:.2f}mm)'.format(
+                            pt[0], pt[1], pcbnew.ToMM(min_same_net_clearance)), debug)
+                        rejected_reasons['same_net_track'] += 1
+                        reject_track = True
+                        break
+                else:
+                    # Different net: use full DRC clearance
+                    if via_track_overlaps(pt, self.viaSize, trk, clearance):
+                        wxLogDebug('  Reject via at [{:.0f}, {:.0f}] - diff-net track overlap (clearance={:.2f}mm)'.format(
+                            pt[0], pt[1], pcbnew.ToMM(clearance)), debug)
+                        rejected_reasons['diff_net_track'] += 1
+                        reject_track = True
+                        break
+            if reject_track:
+                continue
             if any(via_via_overlaps(pt, self.viaSize, ev, clearance) for ev in existing_vias):
-                wxLogDebug('Reject via at {} (existing via overlap)'.format(pt), debug); continue
+                wxLogDebug('  Reject via at [{:.0f}, {:.0f}] - existing via overlap'.format(pt[0], pt[1]), debug)
+                rejected_reasons['existing_via'] += 1
+                continue
             accepted.append(pt)
+        
+        wxLogDebug('filter_vias_precise: Accepted {}/{} vias. Rejections: pad={}, same_net_track={}, diff_net_track={}, existing_via={}'.format(
+            len(accepted), len(candidate_points), rejected_reasons['pad'], rejected_reasons['same_net_track'],
+            rejected_reasons['diff_net_track'], rejected_reasons['existing_via']), debug)
+        
         return accepted
 # ------------------------------------------------------------------------------------
     
@@ -301,8 +361,13 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         self.mainDlg.txtNetFilter.SetSelection(self.netFilterList.index(self.netFilter))
         self.mainDlg.txtViaOffset.SetValue(str(pcbnew.ToMM(self.viaOffset)))
         self.mainDlg.txtViaPitch.SetValue(str(pcbnew.ToMM(self.viaPitch)))
+        # Inter-row offset defaults to viaOffset if not set
+        if not hasattr(self, 'interRowOffset') or self.interRowOffset is None:
+            self.interRowOffset = self.viaOffset
+        self.mainDlg.txtInterRowOffset.SetValue(str(pcbnew.ToMM(self.interRowOffset)))
         self.mainDlg.txtViaDrill.SetValue(str(pcbnew.ToMM(self.viaDrill)))
         self.mainDlg.txtViaSize.SetValue(str(pcbnew.ToMM(self.viaSize)))
+        self.mainDlg.spnFenceRows.SetValue(self.fenceRows)
         self.mainDlg.txtViaOffset.Bind(wx.EVT_KEY_DOWN, self.DoKeyPress)
         #self.mainDlg.txtViaOffset.Bind(wx.EVT_TEXT_ENTER, self.mainDlg.EndModal(wx.ID_OK))
         self.mainDlg.txtViaPitch.Bind(wx.EVT_KEY_DOWN, self.DoKeyPress)
@@ -336,8 +401,10 @@ class ViaFenceAction(pcbnew.ActionPlugin):
             self.layerId = list(self.layerMap.keys())[self.mainDlg.lstLayer.GetSelection()]   #maui
         self.viaOffset = pcbnew.FromMM(float(self.mainDlg.txtViaOffset.GetValue().replace(',','.')))
         self.viaPitch = pcbnew.FromMM(float(self.mainDlg.txtViaPitch.GetValue().replace(',','.')))
+        self.interRowOffset = pcbnew.FromMM(float(self.mainDlg.txtInterRowOffset.GetValue().replace(',','.')))
         self.viaDrill = pcbnew.FromMM(float(self.mainDlg.txtViaDrill.GetValue().replace(',','.')))
         self.viaSize = pcbnew.FromMM(float(self.mainDlg.txtViaSize.GetValue().replace(',','.')))
+        self.fenceRows = self.mainDlg.spnFenceRows.GetValue()
         if len(list(self.netMap.keys())) > 0:
             self.viaNetId = list(self.netMap.keys())[self.mainDlg.lstViaNet.GetSelection()]   #maui
         self.isNetFilterChecked = self.mainDlg.chkNetFilter.GetValue()
@@ -395,6 +462,7 @@ class ViaFenceAction(pcbnew.ActionPlugin):
             self.viaDrill = self.boardDesignSettingsObj.GetCurrentViaDrill()
             self.viaPitch = pcbnew.FromMM(1.3)
             self.viaOffset = pcbnew.FromMM(1.3)
+            self.fenceRows = 1  # Rows per side
             self.viaNetId = 0
             self.isNetFilterChecked = 1 if self.highlightedNetId != -1 else 0
             self.isLayerChecked = 0
@@ -495,14 +563,18 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                     self.pathListArcs = [[[p.x, p.y], [pts[i+1].x, pts[i+1].y]] for i, p in enumerate(pts[:-1])]
                     try:
                         if len(arcObjects) > 0:
-                            viaPointsArcs = generateViaFence(self.pathListArcs, self.viaOffset, self.viaPitch)
+                            viaPointsArcs = generateViaFenceMultiRow(self.pathListArcs, self.viaOffset, self.viaPitch,
+                                                                      self.fenceRows, self.interRowOffset)
                             viaPointsArcsAll.extend(viaPointsArcs)
                     except Exception as exc:
                         wx.LogMessage('exception on via fence generation: {}'.format(exc))
                         import traceback; wx.LogMessage(traceback.format_exc())
                 self.pathList = [[[lo.GetStart()[0], lo.GetStart()[1]], [lo.GetEnd()[0], lo.GetEnd()[1]]] for lo in lineObjects]
                 try:
-                    viaPoints = generateViaFence(self.pathList, self.viaOffset, self.viaPitch)
+                    viaPoints = generateViaFenceMultiRow(self.pathList, self.viaOffset, self.viaPitch,
+                                                        self.fenceRows, self.interRowOffset)
+                    wxLogDebug('Generated {} vias from {} line objects ({} rows per side)'.format(
+                        len(viaPoints), len(lineObjects), self.fenceRows), debug)
                 except Exception as exc:
                     wx.LogMessage('exception on via fence generation: {}'.format(exc))
                     import traceback; wx.LogMessage(traceback.format_exc()); viaPoints = []
@@ -545,8 +617,10 @@ class ViaFenceAction(pcbnew.ActionPlugin):
             config = configparser.ConfigParser(); config.read(self.local_config_file)
             config['params']['offset'] = self.mainDlg.txtViaOffset.GetValue()
             config['params']['pitch'] = self.mainDlg.txtViaPitch.GetValue()
+            config['params']['inter_row_offset'] = self.mainDlg.txtInterRowOffset.GetValue()
             config['params']['via_drill'] = self.mainDlg.txtViaDrill.GetValue()
             config['params']['via_size'] = self.mainDlg.txtViaSize.GetValue()
+            config['params']['fence_rows_per_side'] = str(self.mainDlg.spnFenceRows.GetValue())
             config['options']['include_selected'] = str(self.mainDlg.chkIncludeSelection.GetValue())
             config['options']['include_drawings'] = str(self.mainDlg.chkIncludeDrawing.GetValue())
             config['options']['remove_violations'] = str(self.mainDlg.chkRemoveViasWithClearanceViolation.GetValue())

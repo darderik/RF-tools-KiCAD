@@ -26,8 +26,13 @@ class MainDialog(MainDialogBase):
         config.read(self.local_config_file)
         self.txtViaOffset.SetValue(config.get('params','offset'))
         self.txtViaPitch.SetValue(config.get('params','pitch'))
+        # Inter-row offset: optional; default to offset if missing
+        inter_row = config.get('params','inter_row_offset') if config.has_option('params','inter_row_offset') else config.get('params','offset')
+        self.txtInterRowOffset.SetValue(inter_row)
         self.txtViaDrill.SetValue(config.get('params','via_drill'))
         self.txtViaSize.SetValue(config.get('params','via_size'))
+        if config.has_option('params','fence_rows_per_side'):
+            self.spnFenceRows.SetValue(config.getint('params','fence_rows_per_side'))
         self.chkIncludeSelection.SetValue(config['options'].getboolean('include_selected'))
         self.chkRemoveViasWithClearanceViolation.SetValue(config['options'].getboolean('remove_violations'))
         self.chkIncludeDrawing.SetValue(config['options'].getboolean('include_drawings'))

@@ -1,0 +1,40 @@
+17:56:26: Generated 146 vias from 8 line objects (2 rows per side)
+17:56:26: filter_vias_precise: Testing 177 candidate vias, 63 tracks, 252 pads, 324 existing_vias
+17:56:26:   Reject via at [84367315, 62446315] - diff-net track overlap (clearance=0.00mm)
+17:56:26:   Reject via at [85498685, 63577685] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [96268000, 44445438] - pad overlap
+17:56:27:   Reject via at [96268000, 48720146] - pad overlap
+17:56:27:   Reject via at [96268000, 48220146] - pad overlap
+17:56:27:   Reject via at [96268000, 47720146] - pad overlap
+17:56:27:   Reject via at [96268000, 47220146] - pad overlap
+17:56:27:   Reject via at [96268000, 46720146] - pad overlap
+17:56:27:   Reject via at [96268000, 46220146] - pad overlap
+17:56:27:   Reject via at [96268000, 45720146] - pad overlap
+17:56:27:   Reject via at [96268000, 45220146] - pad overlap
+17:56:27:   Reject via at [97868000, 44445438] - pad overlap
+17:56:27:   Reject via at [97868000, 44945438] - pad overlap
+17:56:27:   Reject via at [97868000, 45445438] - pad overlap
+17:56:27:   Reject via at [97868000, 45945438] - pad overlap
+17:56:27:   Reject via at [97868000, 46445438] - pad overlap
+17:56:27:   Reject via at [97868000, 46945438] - pad overlap
+17:56:27:   Reject via at [97868000, 47445438] - pad overlap
+17:56:27:   Reject via at [97868000, 47945438] - pad overlap
+17:56:27:   Reject via at [97868000, 48445438] - pad overlap
+17:56:27:   Reject via at [83801629, 61880629] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [84331959, 61350299] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [86064371, 64143371] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [87187746, 63019996] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [86834192, 63373550] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [86480639, 63727103] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [91881975, 58091003] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [91881975, 59582495] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [92412305, 60112825] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [90390474, 55526557] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [90390475, 54035054] - diff-net track overlap (clearance=0.00mm)
+17:56:27:   Reject via at [89860145, 53504724] - diff-net track overlap (clearance=0.00mm)
+17:56:28:   Reject via at [95468482, 49180872] - pad overlap
+17:56:29: filter_vias_precise: Accepted 144/177 vias. Rejections: pad=19, same_net_track=0, diff_net_track=14, existing_via=0
+17:56:29: Filtered 33 overlapping vias (precise pass)
+17:56:29: Placed 144 Fencing Vias.
+⚠ Please run a DRC check on your board.
+⠛ Removed DRC colliding vias.

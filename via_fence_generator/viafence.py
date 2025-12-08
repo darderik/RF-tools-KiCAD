@@ -242,6 +242,16 @@ def distributeAlongPath(path, minimumSpacing):
     ptInterp = PathInterpolator(distList, path)
     return [ptInterp(ptIdx * distList[-1]/nPoints) for ptIdx in range(1, nPoints)]
 
+def distributeAlongPathWithShift(path, minimumSpacing, startShift=0):
+    """Distribute points along path with a starting offset for brick pattern."""
+    distList = getPathCumDist(path)
+    total = distList[-1]
+    if total <= startShift + minimumSpacing:
+        return []
+    nPoints = int(math.floor((total - startShift) / minimumSpacing))
+    ptInterp = PathInterpolator(distList, path)
+    return [ptInterp(startShift + ptIdx * minimumSpacing) for ptIdx in range(1, nPoints+1)]
+
 # Find the leaf vertices in a list of paths,
 # additionally it calculates the slope of the line connected to the leaf vertex
 def getLeafVertices(pathList):
@@ -281,7 +291,7 @@ def trimFlushPolygonAtVertices(path, vertexList, vertexSlopes, radius):
 
     return clipPolygonWithPolygons(path, trimPolys)
 
-def generateViaFence(pathList, viaOffset, viaPitch, vFunc = lambda *args,**kwargs:None):
+def generateViaFence(pathList, viaOffset, viaPitch, vFunc = lambda *args,**kwargs:None, startShift=0):
     global verboseFunc
     verboseFunc = vFunc
     viaPoints = []
@@ -329,9 +339,35 @@ def generateViaFence(pathList, viaOffset, viaPitch, vFunc = lambda *args,**kwarg
             # Then we autoplace vias between the fixed via locations by satisfying the
             # minimum via pitch given by the user
             for subPath in splitPathByPoints(fencePath, fixPointIdxList):
-                viaPoints += distributeAlongPath(subPath, viaPitch)
+                viaPoints += distributeAlongPathWithShift(subPath, viaPitch, startShift)
 
     return viaPoints
+
+def generateViaFenceMultiRow(pathList, viaOffset, viaPitch, numRowsPerSide=1, interRowOffset=None, vFunc = lambda *args,**kwargs:None):
+    """Generate multi-row via fence with brick (half-pitch) longitudinal shift.
+    
+    Row 1 is placed at `viaOffset` from the trace centerline.
+    Each additional row adds `interRowOffset` from the previous row
+    (defaults to `viaOffset` if not specified). Odd-numbered rows are
+    shifted by half-pitch along the trace for a brick pattern.
+    """
+    if numRowsPerSide <= 1:
+        return generateViaFence(pathList, viaOffset, viaPitch, vFunc)
+
+    allViaPoints = []
+    for rowIdx in range(numRowsPerSide):
+        # Row 1 uses viaOffset; subsequent rows add interRowOffset each time
+        row_step = interRowOffset if interRowOffset is not None else viaOffset
+        if rowIdx == 0:
+            current_offset = viaOffset
+        else:
+            current_offset = viaOffset + row_step * rowIdx
+        # Odd rows shift by half-pitch along path for brick pattern
+        startShift = 0 if (rowIdx % 2 == 0) else viaPitch / 2.0
+        row_vias = generateViaFence(pathList, current_offset, viaPitch, vFunc, startShift=startShift)
+        allViaPoints.extend(row_vias)
+
+    return allViaPoints
 
 def create_round_pts(sp,ep,cntr,rad,layer,width,Nn,N_SEGMENTS):
     start_point = sp
