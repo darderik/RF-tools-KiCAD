@@ -65,15 +65,17 @@ def point_segment_distance(point, start, end):
     return math.hypot(point.x - cx, point.y - cy)
 
 def via_track_overlaps(via_pos, via_diam, track, clearance):
-    # Overlap only if annular ring intersects copper area of track (center distance < sum of radii + clearance)
+    # Check if via overlaps with track copper area
+    # Returns True if via annular ring intersects track copper
     via_pt = pcbnew.wxPoint(int(via_pos[0]), int(via_pos[1]))
     start = track.GetStart()
     end = track.GetEnd()
     track_half = track.GetWidth() / 2.0
     via_radius = via_diam / 2.0
     d = point_segment_distance(via_pt, start, end)
-    # Add a tiny tolerance (5%) to compensate discretization
-    tol = via_diam * 0.05
+    # Add clearance tolerance; use 10% for better safety margin on discretized curves
+    tol = via_diam * 0.1
+    # Overlap if center distance is less than track half-width + via radius + clearance
     return d < (track_half + via_radius + clearance + tol)
 
 def via_pad_overlaps(via_pos, via_diam, pad, clearance):
@@ -219,7 +221,7 @@ class ViaFenceAction(pcbnew.ActionPlugin):
         return removed
 
     def checkTracks(self):
-    ##Check vias collisions with tracks (avoid overlapping copper; allow proximity). Overlap allowed only with same-net zones (not implemented yet) but here we distinguish nets.
+    ##Check vias collisions with tracks (avoid overlapping copper on all nets)
         if not(hasattr(pcbnew,'DRAWSEGMENT')) and temporary_fix:
             self.clearance = 0
         else:
@@ -235,10 +237,18 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                 continue
             for viaPos in self.viaPointsSafe:
                 try:
-                    # For tracks of the same net as the via, be strict on physical overlap only (no extra clearance)
-                    extra_clearance = 0 if track.GetNetCode() == self.viaNetId else self.clearance
+                    # Apply clearance to same-net traces too (0.5mm minimum for safety)
+                    # Different nets get full DRC clearance
+                    if track.GetNetCode() == self.viaNetId:
+                        # Same net: use minimum 0.5mm clearance to avoid sitting on trace
+                        min_same_net_clearance = max(pcbnew.FromMM(0.5), self.clearance // 2)
+                        extra_clearance = min_same_net_clearance
+                    else:
+                        # Different net: use full DRC clearance
+                        extra_clearance = self.clearance
                     if via_track_overlaps(viaPos, self.viaSize, track, extra_clearance):
-                        wxLogDebug('Track overlap(net:{} viaNet:{}) -> removing via {}'.format(track.GetNetCode(), self.viaNetId, viaPos), debug)
+                        wxLogDebug('Track overlap(net:{} viaNet:{} clearance:{}) -> removing via {}'.format(
+                            track.GetNetCode(), self.viaNetId, pcbnew.ToMM(extra_clearance), viaPos), debug)
                         viasToRemove.append(viaPos)
                         removed = True
                 except Exception as exc:
@@ -471,9 +481,16 @@ class ViaFenceAction(pcbnew.ActionPlugin):
                     lineObjects = [lo for lo in lineObjects if lo.IsOnLayer(self.layerId)]
                     arcObjects = [ao for ao in arcObjects if ao.IsOnLayer(self.layerId)]
                 for arc in arcObjects:
-                    segNBR = 16
                     start = arc.GetStart(); end = arc.GetEnd(); md = arc.GetMid(); width = arc.GetWidth(); layer = arc.GetLayerSet(); netName = None
                     cnt, rad = getCircleCenterRadius(start, end, md)
+                    # Calculate arc angle
+                    a1 = math.atan2(float(start.y - cnt.y), float(start.x - cnt.x))
+                    a2 = math.atan2(float(end.y - cnt.y), float(end.x - cnt.x))
+                    arc_angle = abs(a2 - a1)
+                    if arc_angle > math.pi:
+                        arc_angle = 2 * math.pi - arc_angle
+                    # Use adaptive segmentation: 0.1mm max deviation for tight serpentine curves
+                    segNBR = calculate_adaptive_segments(rad, arc_angle, max_deviation_mm=0.1, min_segments=16)
                     pts = create_round_pts(start, end, cnt, rad, layer, width, netName, segNBR)
                     self.pathListArcs = [[[p.x, p.y], [pts[i+1].x, pts[i+1].y]] for i, p in enumerate(pts[:-1])]
                     try:

@@ -28,6 +28,8 @@ class MainDialog(MainDialogBase):
         self.txtViaPitch.SetValue(config.get('params','pitch'))
         self.txtViaDrill.SetValue(config.get('params','via_drill'))
         self.txtViaSize.SetValue(config.get('params','via_size'))
+        self.spnFenceRows.SetValue(config.getint('params','fence_rows'))
+        self.txtRowSpacing.SetValue(config.get('params','row_spacing'))
         self.chkIncludeSelection.SetValue(config['options'].getboolean('include_selected'))
         self.chkRemoveViasWithClearanceViolation.SetValue(config['options'].getboolean('remove_violations'))
         self.chkIncludeDrawing.SetValue(config['options'].getboolean('include_drawings'))

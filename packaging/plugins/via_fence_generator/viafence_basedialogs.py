@@ -35,7 +35,7 @@ class MainDialogBase ( wx.Dialog ):
 
 		sbSizer2 = wx.StaticBoxSizer( wx.StaticBox( self, wx.ID_ANY, u"Via Settings" ), wx.VERTICAL )
 
-		fgSizer4 = wx.FlexGridSizer( 8, 2, 0, 0 )
+		fgSizer4 = wx.FlexGridSizer( 10, 2, 0, 0 )
 		fgSizer4.AddGrowableCol( 1 )
 		fgSizer4.SetFlexibleDirection( wx.BOTH )
 		fgSizer4.SetNonFlexibleGrowMode( wx.FLEX_GROWMODE_SPECIFIED )
@@ -81,6 +81,22 @@ class MainDialogBase ( wx.Dialog ):
 		self.lstViaNet = wx.Choice( sbSizer2.GetStaticBox(), wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, lstViaNetChoices, 0 )
 		self.lstViaNet.SetSelection( 0 )
 		fgSizer4.Add( self.lstViaNet, 1, wx.EXPAND|wx.ALL, 5 )
+
+		self.m_staticText24 = wx.StaticText( sbSizer2.GetStaticBox(), wx.ID_ANY, u"Fence Rows:", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText24.Wrap( -1 )
+
+		fgSizer4.Add( self.m_staticText24, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5 )
+
+		self.spnFenceRows = wx.SpinCtrl( sbSizer2.GetStaticBox(), wx.ID_ANY, u"1", wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 1, 8, 1 )
+		fgSizer4.Add( self.spnFenceRows, 0, wx.ALL|wx.EXPAND, 5 )
+
+		self.m_staticText25 = wx.StaticText( sbSizer2.GetStaticBox(), wx.ID_ANY, u"Row Spacing (mm):", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText25.Wrap( -1 )
+
+		fgSizer4.Add( self.m_staticText25, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5 )
+
+		self.txtRowSpacing = wx.TextCtrl( sbSizer2.GetStaticBox(), wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.TE_PROCESS_ENTER|wx.TE_RIGHT )
+		fgSizer4.Add( self.txtRowSpacing, 0, wx.ALL|wx.EXPAND, 5 )
 
 
 		sbSizer2.Add( fgSizer4, 1, wx.EXPAND, 5 )
