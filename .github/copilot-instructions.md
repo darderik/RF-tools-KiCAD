@@ -1,20 +1,37 @@
-# RF-Tools KiCad – AI Coding Guide
+# RF-Tools KiCad – Copilot Instructions
 
-- Scope: Suite of KiCad pcbnew Action Plugins + footprint wizards; compatibility spans KiCad 5.1–8.0 per `README.md` and `metadata.json`.
-- Layout: Top-level plugin dirs (`round_tracks/`, `taper_fz/`, `trace_solder_expander/`, `tracks_length/`, `trace_clearance/`, `via_fence_generator/`, `rf_tools_wizards/`) plus shared resources/icons and `packaging/` for release artifacts.
-- Entry pattern: Each action plugin subclasses `pcbnew.ActionPlugin` with `defaults()` defining name/category/icon/toolbar flag and `Run()` driving wx dialogs + pcbnew ops (see `round_tracks/round_trk.py`, `trace_clearance/trace_clearance.py`, `trace_solder_expander/trace_solder_expander.py`, `via_fence_generator/viafence_action.py`, `tracks_length/trace_length.py`). Keep these signatures; KiCad discovers plugins via the class.
-- UI dialogs: wxFormBuilder-generated dialogs live alongside code (`*Dlg.py`, `.fbp` files). Dialog classes are wrapped (e.g., `RoundTrackDlg`, `TraceClearanceDlg`, `SolderExpanderDlg`) and are instantiated in `Run()`; prefer reusing these rather than recreating layouts.
-- Config storage: Per-plugin INI files persist window size/last parameters (e.g., `round_tracks/rt_config.ini`, `trace_clearance/tc_config.ini`, `trace_solder_expander/tse_config.ini`, `via_fence_generator/vf_config.ini`). When adding params, update reads/writes consistently and keep defaults reasonable.
-- Unit handling: Geometry uses pcbnew internal units; conversions via `pcbnew.ToMM`/`FromMM` are standard. Maintain helper naming (`ToUnits`/`FromUnits`) and avoid mixing raw mm values.
-- Version compatibility: Code guards pcbnew API differences with `hasattr` (e.g., `TRACK` vs `PCB_TRACK`, `ZONE_CONTAINER` vs `ZONE`, `EDA_RECT`, wxPoint variants). Do not remove these shims; extend them if adding new KiCad-version-specific behavior.
-- Via Fence plugin: Entry at `via_fence_generator/viafence_action.py`, geometry helpers in `viafence.py`, dialogs in `viafence_dialogs.py`; uses `temporary_fix` for older KiCad and de-duplicates vias with clearance-aware checks. Test harness in `via_fence_generator/__main__.py` supports `--runtests`/`--test <name>` using JSON fixtures under `via_fence_generator/tests/`; requires numpy + matplotlib + wx for plotting.
-- Other plugins: `trace_clearance` builds keepout zones for selected tracks; handles arcs and multiple pcbnew zone classes. `trace_solder_expander` expands solder mask for selected tracks/pads, with optional discretization on older KiCad. `tracks_length` reports length (and angle) for selected tracks or connected nets from a selected pad. `taper_fz/taper_plugin.py` invokes `SetTaper_Zone` from `taper.py` to build tapers as zones.
-- Footprint wizards: `rf_tools_wizards/uw*` modules implement microwave footprint generators; copied into KiCad footprint wizards dir during packaging.
-- External deps: Runtime depends on KiCad’s bundled `pcbnew` + `wx`. `via_fence_generator/python-pyclipper/` ships platform-specific pyclipper binaries; keep directory names intact. Test/CLI flow needs numpy/matplotlib in the environment.
-- Packaging workflow: `python package.py` copies plugin folders/files into `packaging/` and zips to `rftools.zip` using `packaging/metadata.json` + resources; ensure new plugins are added to `plugins_folders` and resources lists before packaging.
-- Installation notes: For manual testing, copy plugin directories and shared files into the KiCad user plugin directory (see KiCad docs link in `README.md`). Icons are resolved relative to each module; keep filenames stable.
-- Coding style: Preserve GPL headers, minimal debug logging via `wx.LogMessage`, and helper naming (e.g., `wxLogDebug`, `distance`, `getTrackAngle`). Favor small helper functions over inlining geometry math to ease cross-version maintenance.
-- Testing: Only automated tests present are via-fence JSON fixtures executed through `python -m via_fence_generator --runtests`. Update fixtures if algorithm outputs change; `--store` rewrites expected JSON.
-- Risks to watch: geometry routines assume integer pcbnew coords; avoid converting to float mid-pipeline. Many algorithms mutate selection; ensure selections are cleared/refreshed (`pcbnew.Refresh()`) when altering workflows. Older KiCad builds may lack certain APIs—feature-gate additions similarly to existing guards.
+## Project shape (what matters first)
+- This repo is a **bundle of pcbnew Action Plugins + footprint wizards**, loaded by KiCad through package imports.
+- Top-level loader is `__init__.py`; each plugin subpackage registers itself in its own `__init__.py` (example: `via_fence_generator/__init__.py`).
+- Main plugin dirs: `round_tracks/`, `taper_fz/`, `trace_solder_expander/`, `tracks_length/`, `trace_clearance/`, `via_fence_generator/`, `rf_tools_wizards/`.
+- `packaging/` is generated release content; source-of-truth is the top-level plugin folders.
 
-Use these conventions when extending plugins or adding new ones so they remain KiCad-version friendly, packageable via `package.py`, and compatible with existing dialogs/config files.
+## Core implementation pattern
+- Action plugins subclass `pcbnew.ActionPlugin`, define `defaults()`, and implement `Run()` (see `round_tracks/round_trk.py`, `trace_clearance/trace_clearance.py`, `via_fence_generator/viafence_action.py`).
+- Dialogs are wxFormBuilder-generated base classes (`*_basedialogs.py` / `*Dlg.py`) wrapped by derived classes (`viafence_dialogs.py`, etc.).
+- Persisted user settings live in per-plugin INI files (for example `via_fence_generator/vf_config.ini`, `trace_clearance/tc_config.ini`). When adding UI fields, update both load and save paths.
+
+## Version-compatibility rules (KiCad 5.1–8.0+)
+- Keep `hasattr`-based API shims; do not collapse them.
+- Common forks to preserve: `TRACK` vs `PCB_TRACK`, `ZONE_CONTAINER` vs `ZONE`, `VIA` vs `PCB_VIA`, `wxPoint`/`VECTOR2I` handling.
+- Geometry and board operations should remain in pcbnew internal units; convert only at UI boundaries with `pcbnew.FromMM` / `pcbnew.ToMM` (or local `ToUnits`/`FromUnits` aliases).
+
+## Via Fence architecture (cross-file flow)
+- UI/config in `via_fence_generator/viafence_dialogs.py` + `vf_config.ini`.
+- Plugin orchestration in `via_fence_generator/viafence_action.py` (track selection, arc discretization, filtering, via creation).
+- Geometry engine in `via_fence_generator/viafence.py` (`generateViaFence`, `generateViaFenceMultiRow`, path interpolation helpers).
+- Current multi-row controls are `fence_rows_per_side` and `inter_row_offset` (UI: `spnFenceRows`, `txtInterRowOffset`), with half-pitch brick shift on odd rows.
+- Keep deduplication/filtering order intact: generate points → de-dup → optional clearance checks → precise overlap pass.
+
+## Build, packaging, and test workflows
+- Package release artifacts with `python package.py` from repo root.
+- `package.py` copies declared plugin folders/files into `packaging/` and creates `rftools.zip` from **packaging contents**.
+- If adding/removing plugins, update `plugins_folders` (and any copied resources/files) in `package.py` and imports in top-level `__init__.py`.
+- Via-fence regression harness: `python -m via_fence_generator --runtests`.
+- Inspect/update one fixture: `python -m via_fence_generator --test simple-test --verbose` and optionally `--store`.
+
+## Repo-specific conventions to keep
+- Preserve GPL headers in existing source files.
+- Prefer small geometry helpers over inlined math in plugin `Run()` methods.
+- Use `wx.LogMessage`/local debug helpers instead of ad-hoc prints inside KiCad plugin flow.
+- Do not edit `packaging/plugins/*` directly for feature work; mirror changes from source dirs and re-run packaging.

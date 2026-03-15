@@ -23,6 +23,18 @@ Tapers for pads and tracks
 
 [![Tapers for pads and tracks](resources/pcbnew-taper-plugin-2.png?raw=true "Tapers for pads and tracks")](resources/pcbnew-taper-plugin-2.gif?raw=true "Tracks Taper")
 
+Taper plugin settings are stored in `taper_fz/tp_config.ini`:
+- `segments`: curve smoothness (default `10`)
+- `length_factor`: multiplier for automatic taper length (default `1.0`)
+- `length_mm`: fixed taper length in mm (default `0.0`, disabled)
+- `smooth_edges`: enable edge fillet smoothing (default `True`)
+- `fillet_radius_mm`: fillet radius in mm (default `0.06`)
+
+Taper GUI opens when running the plugin and supports:
+- Apply with parameters
+- Remove all taper zones
+- Trajectory taper mode: select **3+ connected tracks** to build one taper zone following the selected trace path, from max selected width to min selected width.
+
 Solder Mask Expander
 
 [![Solder Mask Expander](resources/solder-mask-expander-preview.png?raw=true "Solder Mask Expander")](resources/solder-mask-expander.gif?raw=true "Solder Mask Expander")
